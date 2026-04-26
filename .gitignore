@@ -1,0 +1,8 @@
+/.vscode
+/data
+/generate_data.py
+/split_dataset.py
+/todo.txt
+/train.py
+/validate_split.py
+/__pycache__
