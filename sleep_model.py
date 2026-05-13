@@ -124,10 +124,6 @@ class SleepImpactPredictor(nn.Module):
         history_features: torch.Tensor,
         seq_lengths: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if env_seq.dim() != 3:
-            raise ValueError("env_seq must be 3D tensor with shape (B, T, C)")
-        if static_features.dim() != 2 or history_features.dim() != 2:
-            raise ValueError("static_features and history_features must be 2D tensors")
 
         # LSTM前向
         if seq_lengths is not None:
@@ -137,10 +133,10 @@ class SleepImpactPredictor(nn.Module):
             lstm_out_packed, _ = self.env_lstm(packed)
             lstm_out, _ = nn.utils.rnn.pad_packed_sequence(lstm_out_packed, batch_first=True)
         else:
-            lstm_out, _ = self.env_lstm(env_seq)  # (B, T, H)
+            lstm_out, _ = self.env_lstm(env_seq) 
 
         # 注意力池化
-        attn_scores = self.attn_query(lstm_out).squeeze(-1)  # (B, T)
+        attn_scores = self.attn_query(lstm_out).squeeze(-1) 
         if seq_lengths is not None:
             # 对padding位置做mask，避免无效时间步参与注意力分配
             max_len = lstm_out.size(1)
@@ -150,18 +146,15 @@ class SleepImpactPredictor(nn.Module):
                 .expand(lstm_out.size(0), -1)
             ) >= seq_lengths.unsqueeze(1)
             attn_scores = attn_scores.masked_fill(mask, float("-inf"))
-        attn_weights = torch.softmax(attn_scores, dim=1)  # (B, T)
-        env_vec = torch.sum(lstm_out * attn_weights.unsqueeze(-1), dim=1)  # (B, H)
+        attn_weights = torch.softmax(attn_scores, dim=1)  
+        env_vec = torch.sum(lstm_out * attn_weights.unsqueeze(-1), dim=1)  
 
         static_out = self.static_encoder(static_features)
         hist_out = self.history_encoder(history_features)
         fused = torch.cat([env_vec, static_out, hist_out], dim=-1)
         out = self.fusion(fused)
 
-        if self.output_dim < 6:
-            raise ValueError("output_dim must be >= 6 to cover objective + subjective metrics")
-
-        # 假设输出顺序：
+        # 输出顺序：
         # [睡眠效率(0-1), 入睡潜伏期(>0), 深睡时长(>0), 觉醒次数(>0),
         #  呼吸暂停低通气指数(>0), 主观睡眠质量(0-1)]
         constrained = torch.stack(
@@ -185,42 +178,31 @@ class ControlPolicyModel(nn.Module):
     输出：
       - Actor（策略）：离散动作 logits + 连续动作分布参数
       - Critic（价值）：状态价值 V(s)
-
-    可直接用于 PPO/A2C 等策略梯度算法训练。
     """
+
+    _RNN_MAP = {"GRU": nn.GRU, "LSTM": nn.LSTM}
 
     def __init__(
         self,
         state_dim: int,
-        discrete_action_dim: int,  # 离散动作数，如开/关香薰
-        continuous_action_dim: int,  # 连续动作数，如温度调节幅度
+        discrete_action_dim: int,
+        continuous_action_dim: int,
         hidden_dim: int = 128,
         rnn_layers: int = 2,
-        rnn_type: str = "GRU",  # 或 "LSTM"
+        rnn_type: str = "GRU",
         action_log_std_init: float = -0.5,
     ):
         super().__init__()
-        if rnn_type == "GRU":
-            self.rnn = nn.GRU(
-                input_size=state_dim,
-                hidden_size=hidden_dim,
-                num_layers=rnn_layers,
-                batch_first=True,
-                dropout=0.2 if rnn_layers > 1 else 0.0,
-            )
-        elif rnn_type == "LSTM":
-            self.rnn = nn.LSTM(
-                input_size=state_dim,
-                hidden_size=hidden_dim,
-                num_layers=rnn_layers,
-                batch_first=True,
-                dropout=0.2 if rnn_layers > 1 else 0.0,
-            )
-        else:
-            raise ValueError("rnn_type must be 'GRU' or 'LSTM'")
-
-        self.discrete_action_dim = discrete_action_dim
-        self.continuous_action_dim = continuous_action_dim
+        rnn_cls = self._RNN_MAP.get(rnn_type)
+        if rnn_cls is None:
+            raise ValueError(f"Unsupported rnn_type='{rnn_type}', expected 'GRU' or 'LSTM'")
+        self.rnn = rnn_cls(
+            input_size=state_dim,
+            hidden_size=hidden_dim,
+            num_layers=rnn_layers,
+            batch_first=True,
+            dropout=0.2 if rnn_layers > 1 else 0.0,
+        )
 
         # Actor heads
         self.discrete_head = nn.Linear(hidden_dim, discrete_action_dim)
@@ -235,9 +217,6 @@ class ControlPolicyModel(nn.Module):
     def _encode_state(
         self, state_seq: torch.Tensor, seq_lengths: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        if state_seq.dim() != 3:
-            raise ValueError("state_seq must be 3D tensor with shape (B, T, C)")
-
         # state_seq: (batch, seq_len, state_dim)
         if seq_lengths is not None:
             packed = nn.utils.rnn.pack_padded_sequence(
@@ -248,19 +227,18 @@ class ControlPolicyModel(nn.Module):
             last_idx = (seq_lengths - 1).clamp(min=0).to(rnn_out.device)
             final_hidden = rnn_out[torch.arange(rnn_out.size(0), device=rnn_out.device), last_idx]
         else:
-            rnn_out, _ = self.rnn(state_seq)  # (B, T, H)
-            final_hidden = rnn_out[:, -1, :]  # (B, H)
-
+            rnn_out, _ = self.rnn(state_seq)
+            final_hidden = rnn_out[:, -1, :]
         return final_hidden
 
     def forward(
         self, state_seq: torch.Tensor, seq_lengths: Optional[torch.Tensor] = None
     ) -> dict[str, torch.Tensor]:
         final_hidden = self._encode_state(state_seq, seq_lengths)
-        discrete_logits = self.discrete_head(final_hidden)  # (B, discrete_action_dim)
-        continuous_mean = self.continuous_mean_head(final_hidden)  # (B, continuous_action_dim)
+        discrete_logits = self.discrete_head(final_hidden)
+        continuous_mean = self.continuous_mean_head(final_hidden)
         continuous_log_std = self.continuous_log_std.unsqueeze(0).expand_as(continuous_mean)
-        state_value = self.value_head(final_hidden).squeeze(-1)  # (B,)
+        state_value = self.value_head(final_hidden).squeeze(-1)
 
         return {
             "discrete_logits": discrete_logits,
@@ -269,33 +247,27 @@ class ControlPolicyModel(nn.Module):
             "state_value": state_value,
         }
 
-    def act(
-        self, state_seq: torch.Tensor, seq_lengths: Optional[torch.Tensor] = None
-    ) -> dict[str, torch.Tensor]:
-        """采样动作并返回 log_prob/value，便于在线交互与训练。"""
-        out = self.forward(state_seq, seq_lengths)
+    def _make_dist(self, out: dict[str, torch.Tensor]):
+        """从 forward 输出创建离散 + 连续分布。"""
         discrete_dist = Categorical(logits=out["discrete_logits"])
         continuous_std = torch.exp(out["continuous_log_std"])
         continuous_dist = Normal(out["continuous_mean"], continuous_std)
+        return discrete_dist, continuous_dist
+
+    def act(
+        self, state_seq: torch.Tensor, seq_lengths: Optional[torch.Tensor] = None
+    ) -> dict[str, torch.Tensor]:
+        out = self.forward(state_seq, seq_lengths)
+        discrete_dist, continuous_dist = self._make_dist(out)
 
         discrete_action = discrete_dist.sample()
         continuous_action = continuous_dist.sample()
-
         log_prob = discrete_dist.log_prob(discrete_action) + continuous_dist.log_prob(
             continuous_action
         ).sum(dim=-1)
         entropy = discrete_dist.entropy() + continuous_dist.entropy().sum(dim=-1)
 
-        return {
-            "discrete_action": discrete_action,
-            "continuous_action": continuous_action,
-            "log_prob": log_prob,
-            "entropy": entropy,
-            "state_value": out["state_value"],
-            "discrete_logits": out["discrete_logits"],
-            "continuous_mean": out["continuous_mean"],
-            "continuous_log_std": out["continuous_log_std"],
-        }
+        return {**out, "discrete_action": discrete_action, "continuous_action": continuous_action, "log_prob": log_prob, "entropy": entropy}
 
     def evaluate_actions(
         self,
@@ -306,23 +278,14 @@ class ControlPolicyModel(nn.Module):
     ) -> dict[str, torch.Tensor]:
         """评估给定动作的 log_prob / entropy / value，用于 PPO 损失。"""
         out = self.forward(state_seq, seq_lengths)
-        discrete_dist = Categorical(logits=out["discrete_logits"])
-        continuous_std = torch.exp(out["continuous_log_std"])
-        continuous_dist = Normal(out["continuous_mean"], continuous_std)
+        discrete_dist, continuous_dist = self._make_dist(out)
 
         log_prob = discrete_dist.log_prob(discrete_actions) + continuous_dist.log_prob(
             continuous_actions
         ).sum(dim=-1)
         entropy = discrete_dist.entropy() + continuous_dist.entropy().sum(dim=-1)
 
-        return {
-            "log_prob": log_prob,
-            "entropy": entropy,
-            "state_value": out["state_value"],
-            "discrete_logits": out["discrete_logits"],
-            "continuous_mean": out["continuous_mean"],
-            "continuous_log_std": out["continuous_log_std"],
-        }
+        return {**out, "log_prob": log_prob, "entropy": entropy}
 
 
 def build_models() -> dict:
