@@ -56,8 +56,16 @@ def control_policy_losses(
 
     entropy = torch.tensor(0.0, device=loss.device)
     if entropy_coef != 0.0 and "continuous_log_std" in eval_out:
+        # 离散动作熵
         discrete_dist = torch.distributions.Categorical(logits=eval_out["discrete_logits"])
-        entropy = discrete_dist.entropy().mean()
+        discrete_entropy = discrete_dist.entropy().mean()
+
+        # 连续动作熵
+        continuous_std = torch.exp(eval_out["continuous_log_std"])
+        continuous_dist = torch.distributions.Normal(eval_out["continuous_mean"], continuous_std)
+        continuous_entropy = continuous_dist.entropy().sum(dim=-1).mean()
+
+        entropy = discrete_entropy + continuous_entropy
         loss = loss - entropy_coef * entropy
 
     return {
