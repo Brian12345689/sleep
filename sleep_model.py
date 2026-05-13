@@ -176,8 +176,8 @@ class ControlPolicyModel(nn.Module):
 
     输入状态：当前时间、温湿度、气味、睡眠阶段、历史行为/设备状态等。
     输出：
-      - Actor（策略）：离散动作 logits + 连续动作分布参数
-      - Critic（价值）：状态价值 V(s)
+      Actor（策略）：离散动作 logits + 连续动作分布参数
+      Critic（价值）：状态价值 V(s)
     """
 
     _RNN_MAP = {"GRU": nn.GRU, "LSTM": nn.LSTM}

@@ -82,7 +82,7 @@ def predict_env_quality(model, numeric: np.ndarray, odor: np.ndarray) -> Dict[st
     odor = torch.LongTensor(odor).to(device)
     if numeric.dim() == 1:
         numeric = numeric.unsqueeze(0)
-        odor = odor.unsqueeze(0)
+    # Embedding 接受 (batch,) 或标量，不需要 unsqueeze
 
     out = model(numeric, odor)
     comfort = out["comfort_score"].cpu().numpy()
@@ -222,12 +222,18 @@ def main():
 
     # 输出
     if args.output:
-        np.savez(args.output, **results)
+        if isinstance(results, dict):
+            np.savez(args.output, **results)
+        else:
+            np.save(args.output, results)
         logger.info(f"结果已保存至 {args.output}")
     else:
         logger.info("预测结果：")
-        for k, v in results.items():
-            print(f"{k}: {v}")
+        if isinstance(results, dict):
+            for k, v in results.items():
+                print(f"{k}: {v}")
+        else:
+            print(results)
 
 
 if __name__ == "__main__":

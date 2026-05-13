@@ -58,7 +58,7 @@ def _to_device(batch, device):
 # 数据集
 
 class SleepDataset(Dataset):
-    """多任务睡眠数据集。"""
+    """睡眠数据集。"""
 
     def __init__(self, paths: DatasetPaths, seq_len: int = 24, task: str = "env_quality"):
         if task not in {"env_quality", "sleep_prediction", "control_policy"}:

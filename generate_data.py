@@ -125,7 +125,7 @@ def generate_sample_data(num_users: int = 100, days_per_user: int = 30, output_d
                 }
                 all_env_labels.append(env_label_data)
 
-                # 控制策略数据 (简化)
+                # 控制策略数据
                 sleep_stage = np.random.choice([0, 1, 2, 3])  # 0:清醒, 1:N1, 2:N2, 3:N3
                 time_of_day = hour / 24.0
 
